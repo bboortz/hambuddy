@@ -1238,7 +1238,7 @@ class CWCompanion(QMainWindow):
         
         self.spots_table = QTableWidget()
         self.spots_table.setColumnCount(5)
-        self.spots_table.setHorizontalHeaderLabels(['Time', 'Freq', 'Call', 'Band', 'Comment'])
+        self.spots_table.setHorizontalHeaderLabels(['Time', 'Freq (kHz)', 'Call', 'Band', 'Comment'])
         self.spots_table.setAlternatingRowColors(True)
         
         header = self.spots_table.horizontalHeader()
@@ -1266,7 +1266,7 @@ class CWCompanion(QMainWindow):
         
         self.filtered_spots_table = QTableWidget()
         self.filtered_spots_table.setColumnCount(5)
-        self.filtered_spots_table.setHorizontalHeaderLabels(['Time', 'Freq', 'Call', 'Band', 'Comment'])
+        self.filtered_spots_table.setHorizontalHeaderLabels(['Time', 'Freq (kHz)', 'Call', 'Band', 'Comment'])
         self.filtered_spots_table.setAlternatingRowColors(True)
         
         filtered_header = self.filtered_spots_table.horizontalHeader()
@@ -1585,6 +1585,11 @@ class CWCompanion(QMainWindow):
             
             version = self.flrig_client.main.get_version()
             print(f"[FLRIG] XML-RPC connected v{version}")
+            try:
+                methods = self.flrig_client.system.listMethods()
+                print(f"[FLRIG] Available methods: {methods}")
+            except Exception:
+                pass
             
             self.connection_timer.stop()
             self.xmlrpc_status_label.setText(f'XML-RPC: Connected (v{version})')
@@ -1640,7 +1645,7 @@ class CWCompanion(QMainWindow):
             if abs(freq_mhz - selected_freq) <= lock_tolerance_mhz:
                 spot = self.manually_selected_spot
                 self.spot_match_label.setText(
-                    f'🟢 SPOT: {spot["callsign"]} @ {spot["freq"]:.3f} MHz '
+                    f'🟢 SPOT: {spot["callsign"]} @ {spot["freq"]*1000:.1f} kHz '
                     f'[{spot["time"]}] - {spot["comment"]} (selected)'
                 )
                 self.spot_match_label.setStyleSheet('color: green; font-weight: bold;')
@@ -1653,7 +1658,7 @@ class CWCompanion(QMainWindow):
         if freq_key in self.spot_cache:
             spot = self.spot_cache[freq_key]
             self.spot_match_label.setText(
-                f'🟢 SPOT: {spot["callsign"]} @ {spot["freq"]:.3f} MHz '
+                f'🟢 SPOT: {spot["callsign"]} @ {spot["freq"]*1000:.1f} kHz '
                 f'[{spot["time"]}] - {spot["comment"]}'
             )
             self.spot_match_label.setStyleSheet('color: green; font-weight: bold;')
@@ -1679,7 +1684,7 @@ class CWCompanion(QMainWindow):
         
         if best_match:
             self.spot_match_label.setText(
-                f'🟢 SPOT: {best_match["callsign"]} @ {best_match["freq"]:.3f} MHz '
+                f'🟢 SPOT: {best_match["callsign"]} @ {best_match["freq"]*1000:.1f} kHz '
                 f'[{best_match["time"]}] - {best_match["comment"]}'
             )
             self.spot_match_label.setStyleSheet('color: green; font-weight: bold;')
@@ -2101,7 +2106,7 @@ class CWCompanion(QMainWindow):
         # Add to ALL SPOTS table
         self.spots_table.insertRow(0)
         self.spots_table.setItem(0, 0, QTableWidgetItem(spot['time']))
-        self.spots_table.setItem(0, 1, QTableWidgetItem(f"{spot['freq']:.3f}"))
+        self.spots_table.setItem(0, 1, QTableWidgetItem(f"{spot['freq']*1000:.1f}"))
         
         call_item = QTableWidgetItem(spot['callsign'])
         call_item.setFont(QFont('Arial', 10, QFont.Bold))
@@ -2123,7 +2128,7 @@ class CWCompanion(QMainWindow):
         """Add spot to filtered table"""
         self.filtered_spots_table.insertRow(0)
         self.filtered_spots_table.setItem(0, 0, QTableWidgetItem(spot['time']))
-        self.filtered_spots_table.setItem(0, 1, QTableWidgetItem(f"{spot['freq']:.3f}"))
+        self.filtered_spots_table.setItem(0, 1, QTableWidgetItem(f"{spot['freq']*1000:.1f}"))
         
         call_item = QTableWidgetItem(spot['callsign'])
         call_item.setFont(QFont('Arial', 10, QFont.Bold))
@@ -2174,25 +2179,34 @@ class CWCompanion(QMainWindow):
             
             # Update spot match indicator immediately
             self.spot_match_label.setText(
-                f'🟢 SPOT: {spot["callsign"]} @ {spot["freq"]:.3f} MHz '
+                f'🟢 SPOT: {spot["callsign"]} @ {spot["freq"]*1000:.1f} kHz '
                 f'[{spot["time"]}] - {spot["comment"]} (selected)'
             )
             self.spot_match_label.setStyleSheet('color: green; font-weight: bold;')
             
             # Tune rig if connected
             if self.flrig_client:
+                freq_hz = float(round(spot['freq'] * 1000000))
+                print(f"[RIG] Tuning: callsign={spot['callsign']} spot_freq_mhz={spot['freq']} "
+                      f"freq_hz={freq_hz} type={type(freq_hz).__name__} "
+                      f"spotter={spot.get('spotter','?')} band={spot.get('band','?')}")
                 try:
-                    freq_hz = int(spot['freq'] * 1000000)
-                    self.flrig_client.rig.set_vfo(freq_hz)
-                    self.flrig_client.rig.set_mode('CW')
-                    self.update_rig_info()
+                    self.flrig_client.rig.set_frequency(freq_hz)
                     print(f"[RIG] Tuned to {spot['freq']:.3f} MHz for {spot['callsign']}")
                 except Exception as e:
-                    print(f"[RIG] Tune error: {e}")
-                    QMessageBox.warning(self, 'Tune Error', 
+                    print(f"[RIG] set_vfo error: {e}")
+                    QMessageBox.warning(self, 'Tune Error',
                                       f'Could not tune rig: {e}\n\n'
                                       'Make sure rig is connected and flrig is working.')
-    
+                    return
+                try:
+                    current_mode = self.flrig_client.rig.get_mode()
+                    if 'CW' not in current_mode.upper():
+                        self.flrig_client.rig.set_mode('CW')
+                except Exception as e:
+                    print(f"[RIG] set_mode error (ignored): {e}")
+                self.update_rig_info()
+
     def on_filtered_spot_clicked(self, row, col):
         """Handle filtered spot click"""
         # Get the spot from filtered table
@@ -2206,7 +2220,7 @@ class CWCompanion(QMainWindow):
             for spot in self.dx_spots:
                 if (spot['callsign'] == callsign and 
                     spot['time'] == time_str and 
-                    f"{spot['freq']:.3f}" == freq_str):
+                    f"{spot['freq']*1000:.1f}" == freq_str):
                     
                     # Mark this spot as manually selected
                     self.manually_selected_spot = spot
@@ -2223,24 +2237,33 @@ class CWCompanion(QMainWindow):
                     # Update spot match indicator
                     wpm_info = f" ({spot.get('wpm')} WPM)" if spot.get('wpm') else ""
                     self.spot_match_label.setText(
-                        f'🟢 FILTERED: {spot["callsign"]} @ {spot["freq"]:.3f} MHz '
+                        f'🟢 FILTERED: {spot["callsign"]} @ {spot["freq"]*1000:.1f} kHz '
                         f'[{spot["time"]}]{wpm_info} - {spot["comment"]} (selected)'
                     )
                     self.spot_match_label.setStyleSheet('color: green; font-weight: bold;')
                     
                     # Tune rig if connected
                     if self.flrig_client:
+                        freq_hz = float(round(spot['freq'] * 1000000))
+                        print(f"[RIG] Tuning (filtered): callsign={spot['callsign']} spot_freq_mhz={spot['freq']} "
+                              f"freq_hz={freq_hz} type={type(freq_hz).__name__} "
+                              f"spotter={spot.get('spotter','?')} band={spot.get('band','?')}")
                         try:
-                            freq_hz = int(spot['freq'] * 1000000)
-                            self.flrig_client.rig.set_vfo(freq_hz)
-                            self.flrig_client.rig.set_mode('CW')
-                            self.update_rig_info()
+                            self.flrig_client.rig.set_frequency(freq_hz)
                             print(f"[RIG] Tuned to {spot['freq']:.3f} MHz for {spot['callsign']} (filtered)")
                         except Exception as e:
-                            print(f"[RIG] Tune error: {e}")
-                            QMessageBox.warning(self, 'Tune Error', 
+                            print(f"[RIG] set_vfo error: {e}")
+                            QMessageBox.warning(self, 'Tune Error',
                                               f'Could not tune rig: {e}\n\n'
                                               'Make sure rig is connected and flrig is working.')
+                            break
+                        try:
+                            current_mode = self.flrig_client.rig.get_mode()
+                            if 'CW' not in current_mode.upper():
+                                self.flrig_client.rig.set_mode('CW')
+                        except Exception as e:
+                            print(f"[RIG] set_mode error (ignored): {e}")
+                        self.update_rig_info()
                     break
     
     def on_wpm_filter_changed(self, filter_value):
